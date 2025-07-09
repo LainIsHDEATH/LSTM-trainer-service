@@ -7,7 +7,6 @@ setup_logging()
 app = FastAPI(title="Temperature LSTM Trainer")
 app.include_router(train_router)
 
-# CORS можно добавить тут, если надо:
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,

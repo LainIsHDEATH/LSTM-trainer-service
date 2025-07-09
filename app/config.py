@@ -1,4 +1,8 @@
 import os
+from pathlib import Path
+
+BASE_DIR = Path(os.getenv("MODELS_DIR", "../models"))
+BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5433")
