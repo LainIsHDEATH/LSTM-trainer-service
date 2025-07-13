@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+numpy
+joblib
+psycopg2-binary
+requests
+pydantic
