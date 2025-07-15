@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from pathlib import Path
 from typing import Optional
 import numpy as np
@@ -10,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from fastapi import HTTPException
 from app.models.lstm_model import TemperatureLSTM
 from app.database import get_db_connection
-from app.config import STORE_API
+from app.config import STORE_API, BASE_DIR
 import joblib
 import logging
 
@@ -75,6 +76,38 @@ def evaluate(model, X, y, y_mean, y_std, batch=64):
     mse  = total_mse / n
     rmse = np.sqrt(mse)
     return mae, mse, rmse
+
+def register_model_in_storage(req, model, X, y, mae, mse, rmse, r2) -> int:
+    store_api = os.getenv("STORE_API", "http://localhost:8082/api")
+    payload = {
+        "id": req.roomId,
+        "type": "LSTM",
+        "path": None,
+        "description": json.dumps({
+            "simulationId":   req.simulationId,
+            "HIDDEN_SIZE":    req.HIDDEN_SIZE,
+            "NUM_LAYERS":     req.NUM_LAYERS,
+            "SEQ_LENGTH":     req.SEQ_LENGTH,
+            "batch_size":     req.batch_size,
+            "epochs_number":  req.epochs_number,
+        }),
+        "active": True,
+    }
+
+    try:
+        r = requests.post(f"{store_api}/models/room-models/{req.roomId}", json=payload)
+        r.raise_for_status()
+        return r.json().get("id") or r.json().get("modelId")
+    except Exception as exc:
+        # если что-то пошло не так — сохраним «упавшую» модель и данные
+        base = Path("models/exception")
+        base.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), base / "model.pth")
+        np.save(base / "X.npy", X)
+        np.save(base / "Y.npy", y)
+        with open(base / "metrics.txt", "w", encoding="utf-8") as f:
+            f.write(f"MAE={mae:.4f}\nMSE={mse:.4f}\nRMSE={rmse:.4f}\nR2={r2:.4f}\n")
+        raise HTTPException(500, f"Не удалось зарегистрировать модель в БД: {exc}")
 
 def train_sync(req):
     try:
@@ -154,7 +187,11 @@ def train_sync(req):
     trues = y_te
     r2 = float(1 - ((trues - preds) ** 2).sum() / ((trues - trues.mean()) ** 2).sum())
 
-    base = Path(f"models/room-{req.roomId}/model-unknown")
+    logger.info(f"Mae {mae:.6f} Mse={mse:.6f}  Rmse={rmse:.6f} R2={r2:.6f}")
+
+    model_id = register_model_in_storage(req, model, X, y, mae, mse, rmse, r2)
+
+    base = BASE_DIR / f"room-{req.roomId}" / f"model-{model_id}"
     base.mkdir(parents=True, exist_ok=True)
 
     meta = {
@@ -171,6 +208,7 @@ def train_sync(req):
     torch.save(model.state_dict(), base / "model.pth")
     with open(base / "metrics.txt", "w", encoding="utf-8") as f:
         f.write(f"MAE={mae:.4f}\nMSE={mse:.4f}\nRMSE={rmse:.4f}\nR2={r2:.4f}\n")
+        logger.info("Saved")
 
     return {
         "metrics": {"MAE": mae, "MSE": mse, "RMSE": rmse, "R2": r2},
