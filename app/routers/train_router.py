@@ -9,7 +9,6 @@ async def train(
     req: TrainRequest,
     background_tasks: BackgroundTasks
 ):
-    # Можно доработать асинхронную очередь или возвращать job_id для отслеживания
     background_tasks.add_task(train_sync, req)
     return {
         "status": "training_started",
